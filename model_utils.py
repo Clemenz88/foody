@@ -1,12 +1,19 @@
 import os
+import numpy as np
 from ultralytics import YOLO
 from PIL import Image
-import numpy as np
+import mediapipe as mp
 
 # General object detection-model (YOLOv8n)
 model_general = YOLO('yolov8n.pt')
 
-# Path til din finetunede mad-model
+# MediaPipe hands for hand detection
+mp_hands = mp.solutions.hands
+hands_detector = mp_hands.Hands(static_image_mode=True,
+                                max_num_hands=1,
+                                min_detection_confidence=0.5)
+
+# Path to custom food model
 food_model_path = 'models/food_model.pt'
 if os.path.exists(food_model_path):
     model_food = YOLO(food_model_path)
@@ -15,26 +22,53 @@ else:
     print(f"[Warning] Mad-model ikke fundet på {food_model_path}. Mad-genkendelse deaktiveret.")
 
 def detect_objects(img: Image.Image):
-    """Returnér liste af detektioner (hånd, skål, etc.)."""
-    results = model_general.predict(source=np.array(img), verbose=False)[0]
-    boxes = results.boxes.xyxy.cpu().numpy()
-    confs = results.boxes.conf.cpu().numpy()
-    classes = results.boxes.cls.cpu().numpy().astype(int)
-    names = [results.names[c] for c in classes]
+    """
+    Detect hands via MediaPipe and containers via YOLO.
+    Returns list of detections as dicts.
+    """
+    # Convert to RGB array
+    img_array = np.array(img)
 
+    # Hand detection
+    results = hands_detector.process(img_array)
     detections = []
-    for i, ((x1, y1, x2, y2), conf, cls, name) in enumerate(zip(boxes, confs, classes, names)):
+    if results.multi_hand_landmarks:
+        h, w, _ = img_array.shape
+        # Compute bounding box around first hand
+        xs = [lm.x * w for lm in results.multi_hand_landmarks[0].landmark]
+        ys = [lm.y * h for lm in results.multi_hand_landmarks[0].landmark]
+        x_min, x_max = max(min(xs) - 10, 0), min(max(xs) + 10, w)
+        y_min, y_max = max(min(ys) - 10, 0), min(max(ys) + 10, h)
         detections.append({
-            'xmin': float(x1), 'ymin': float(y1),
-            'xmax': float(x2), 'ymax': float(y2),
-            'confidence': float(conf),
-            'class': int(cls),
-            'name': name
+            'xmin': float(x_min), 'ymin': float(y_min),
+            'xmax': float(x_max), 'ymax': float(y_max),
+            'confidence': 1.0,
+            'class': -1,
+            'name': 'hand'
         })
+
+    # Container detection via YOLO
+    yolo_res = model_general.predict(source=img_array, verbose=False)[0]
+    boxes = yolo_res.boxes.xyxy.cpu().numpy()
+    confs = yolo_res.boxes.conf.cpu().numpy()
+    classes = yolo_res.boxes.cls.cpu().numpy().astype(int)
+    names = [yolo_res.names[c] for c in classes]
+    for (x1, y1, x2, y2), conf, cls, name in zip(boxes, confs, classes, names):
+        if name in ['bowl', 'cup', 'plate']:
+            detections.append({
+                'xmin': float(x1), 'ymin': float(y1),
+                'xmax': float(x2), 'ymax': float(y2),
+                'confidence': float(conf),
+                'class': int(cls),
+                'name': name
+            })
+
     return detections
 
 def detect_food_items(img: Image.Image, crop_boxes):
-    """Genkend madvarer i de givne bokse, hvis mad-model er tilgængelig."""
+    """
+    Genkend madvarer i de givne bokse, hvis mad-model er tilgængelig.
+    """
     if model_food is None:
         return []
     foods = []
