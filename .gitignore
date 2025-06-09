@@ -1,5 +1,6 @@
 __pycache__/
 *.py[cod]
 .env
-*.csv
+# Ignorer alle .pt-filer, men undtag models-folderen
 *.pt
+!models/**/*.pt

@@ -1,9 +1,7 @@
 streamlit
-torch
-torchvision
-opencv-python
 Pillow
 numpy
 pandas
 scikit-learn
 ultralytics
+opencv-python-headless
